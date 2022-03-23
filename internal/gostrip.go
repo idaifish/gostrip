@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"flag"
 	"io"
 	"log"
 	"os"
@@ -20,7 +21,7 @@ func Gostrip(in, out string) {
 		log.Fatalf("Can't read %s", in)
 	}
 
-	offset, size, byteOrder := getPclntabFromELF(raw)
+	offset, size, byteOrder := getPclntab(raw)
 	strip(raw, offset, size, byteOrder)
 
 	if out == "" {
@@ -31,6 +32,8 @@ func Gostrip(in, out string) {
 	if err != nil {
 		log.Fatalf("Can't write %s: %s", out, err)
 	}
+
+	log.Printf("✅︎ %s is stripped -> %s", flag.Args()[0], out)
 }
 
 func strip(raw []byte, offset, size uint64, byteOrder binary.ByteOrder) {

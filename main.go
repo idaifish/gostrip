@@ -16,6 +16,4 @@ func main() {
 	}
 
 	internal.Gostrip(flag.Args()[0], *out)
-
-	log.Printf("✅︎ %s stripped => %s.", flag.Args()[0], *out)
 }
