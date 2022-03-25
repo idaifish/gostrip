@@ -9,33 +9,47 @@ import (
 	"log"
 )
 
-var pclntabMagic = []byte{0xfa, 0xff, 0xff, 0xff, 0x00, 0x00}
+var pclntabMagic116 = []byte{0xfa, 0xff, 0xff, 0xff, 0x00, 0x00}
+var pclntabMagic118 = []byte{0xf0, 0xff, 0xff, 0xff, 0x00, 0x00}
 
-func getPclntab(raw []byte) (uint64, uint64, binary.ByteOrder) {
+type pclntabVersion int
+
+const (
+	go116 pclntabVersion = iota
+	go118
+)
+
+func getPclntab(raw []byte) (uint64, uint64, binary.ByteOrder, pclntabVersion) {
 	switch {
 	case bytes.HasPrefix(raw, []byte(elf.ELFMAG)) == true:
 		return getPclntabFromELF(raw)
 	case bytes.HasPrefix(raw, []byte{0xcf, 0xfa, 0xed, 0xfe}) == true:
 		return getPclntabFromMacho(raw)
-	case bytes.HasPrefix(raw, []byte{0xca, 0xfe, 0xba, 0xbe}) == true:
-		return getPclntabFromFatMacho(raw)
 	case bytes.HasPrefix(raw, []byte{0x4d, 0x5a}) == true:
 		return getPclntabFromPE(raw)
 	default:
 		log.Fatal("File format is not supported.")
 	}
 
-	return 0, 0, binary.LittleEndian
+	return 0, 0, binary.LittleEndian, go116
 }
 
-func getPclntabFromELF(raw []byte) (uint64, uint64, binary.ByteOrder) {
+func getPclntabFromELF(raw []byte) (uint64, uint64, binary.ByteOrder, pclntabVersion) {
 	elfFile, err := elf.NewFile(bytes.NewReader(raw))
 	if err != nil {
 		log.Fatal("Input file is not ELF format.")
 	}
 
 	if pclntabSection := elfFile.Section(".gopclntab"); pclntabSection != nil {
-		return pclntabSection.Offset, pclntabSection.Size, elfFile.ByteOrder
+		data, _ := pclntabSection.Data()
+		switch {
+		case bytes.HasPrefix(data, pclntabMagic116):
+			return pclntabSection.Offset, pclntabSection.Size, elfFile.ByteOrder, go116
+		case bytes.HasPrefix(data, pclntabMagic118):
+			return pclntabSection.Offset, pclntabSection.Size, elfFile.ByteOrder, go118
+		default:
+			log.Fatal("Failed to find pclntab.")
+		}
 	}
 
 	// PIE or CGO
@@ -45,49 +59,43 @@ func getPclntabFromELF(raw []byte) (uint64, uint64, binary.ByteOrder) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		tabOffset := bytes.Index(data, pclntabMagic)
-		if tabOffset != -1 {
-			return dataSection.Offset + uint64(tabOffset), dataSection.Size - uint64(tabOffset), elfFile.ByteOrder
+
+		if tabOffset := bytes.Index(data, pclntabMagic116); tabOffset != -1 {
+			return dataSection.Offset + uint64(tabOffset), dataSection.Size - uint64(tabOffset), elfFile.ByteOrder, go116
+		} else if tabOffset = bytes.Index(data, pclntabMagic118); tabOffset != -1 {
+			return dataSection.Offset + uint64(tabOffset), dataSection.Size - uint64(tabOffset), elfFile.ByteOrder, go118
 		}
 	} else {
 		log.Fatal("Failed to find pclntab.")
 	}
 
-	return 0, 0, binary.LittleEndian
+	return 0, 0, binary.LittleEndian, go116
 }
 
-func getPclntabFromMacho(raw []byte) (uint64, uint64, binary.ByteOrder) {
+func getPclntabFromMacho(raw []byte) (uint64, uint64, binary.ByteOrder, pclntabVersion) {
 	machoFile, err := macho.NewFile(bytes.NewReader(raw))
 	if err != nil {
 		log.Fatal("Input file is not Mach-O format.")
 	}
 
 	if pclntabSection := machoFile.Section("__gopclntab"); pclntabSection != nil {
-		return uint64(pclntabSection.Offset), pclntabSection.Size, machoFile.ByteOrder
+		data, _ := pclntabSection.Data()
+		switch {
+		case bytes.HasPrefix(data, pclntabMagic116):
+			return uint64(pclntabSection.Offset), pclntabSection.Size, machoFile.ByteOrder, go116
+		case bytes.HasPrefix(data, pclntabMagic118):
+			return uint64(pclntabSection.Offset), pclntabSection.Size, machoFile.ByteOrder, go118
+		default:
+			log.Fatal("Failed to find pclntab.")
+		}
 	} else {
 		log.Fatal("Failed to find pclntab.")
 	}
 
-	return 0, 0, binary.LittleEndian
+	return 0, 0, binary.LittleEndian, go116
 }
 
-func getPclntabFromFatMacho(raw []byte) (uint64, uint64, binary.ByteOrder) {
-	fatFile, err := macho.NewFatFile(bytes.NewReader(raw))
-	if err != nil {
-		log.Fatal("Input file is not Fat Mach-O format.")
-	}
-	machoFile := fatFile.Arches[0]
-
-	if pclntabSection := machoFile.Section("__gopclntab"); pclntabSection != nil {
-		return uint64(pclntabSection.Offset), pclntabSection.Size, machoFile.ByteOrder
-	} else {
-		log.Fatal("Failed to find pclntab.")
-	}
-
-	return 0, 0, binary.LittleEndian
-}
-
-func getPclntabFromPE(raw []byte) (uint64, uint64, binary.ByteOrder) {
+func getPclntabFromPE(raw []byte) (uint64, uint64, binary.ByteOrder, pclntabVersion) {
 	peFile, err := pe.NewFile(bytes.NewReader(raw))
 	if err != nil {
 		log.Fatal("Input file is not PE format.")
@@ -99,13 +107,15 @@ func getPclntabFromPE(raw []byte) (uint64, uint64, binary.ByteOrder) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		tabOffset := bytes.Index(data, pclntabMagic)
-		if tabOffset != -1 {
-			return uint64(dataSection.Offset) + uint64(tabOffset), uint64(dataSection.Size) - uint64(tabOffset), binary.LittleEndian
+
+		if tabOffset := bytes.Index(data, pclntabMagic116); tabOffset != -1 {
+			return uint64(dataSection.Offset) + uint64(tabOffset), uint64(dataSection.Size) - uint64(tabOffset), binary.LittleEndian, go116
+		} else if tabOffset = bytes.Index(data, pclntabMagic118); tabOffset != -1 {
+			return uint64(dataSection.Offset) + uint64(tabOffset), uint64(dataSection.Size) - uint64(tabOffset), binary.LittleEndian, go118
 		}
 	} else {
 		log.Fatal("Failed to find pclntab.")
 	}
 
-	return 0, 0, binary.LittleEndian
+	return 0, 0, binary.LittleEndian, go116
 }

@@ -21,8 +21,8 @@ func Gostrip(in, out string) {
 		log.Fatalf("Can't read %s", in)
 	}
 
-	offset, size, byteOrder := getPclntab(raw)
-	strip(raw, offset, size, byteOrder)
+	offset, size, byteOrder, ver := getPclntab(raw)
+	strip(raw, offset, size, byteOrder, ver)
 
 	if out == "" {
 		out = in
@@ -36,7 +36,7 @@ func Gostrip(in, out string) {
 	log.Printf("✅︎ %s is stripped -> %s", flag.Args()[0], out)
 }
 
-func strip(raw []byte, offset, size uint64, byteOrder binary.ByteOrder) {
+func strip(raw []byte, offset, size uint64, byteOrder binary.ByteOrder, ver pclntabVersion) {
 	data := raw[offset : offset+size]
 
 	ptrSize := data[7]
@@ -47,10 +47,19 @@ func strip(raw []byte, offset, size uint64, byteOrder binary.ByteOrder) {
 		return byteOrder.Uint64(b)
 	}
 
-	funcNameOffset := uintPtr(data[8+2*ptrSize:])
+	var funcNameOffset, fileTabOffset uint64
+	if ver == go116 {
+		funcNameOffset = uintPtr(data[8+2*ptrSize:])
+	} else {
+		funcNameOffset = uintPtr(data[8+3*ptrSize:])
+	}
 	funcNameTab := data[funcNameOffset:]
 
-	fileTabOffset := uintPtr(data[8+4*ptrSize:])
+	if ver == go116 {
+		fileTabOffset = uintPtr(data[8+4*ptrSize:])
+	} else {
+		fileTabOffset = uintPtr(data[8+5*ptrSize:])
+	}
 	fileTab := data[fileTabOffset:]
 
 	stripNames(fileTab)
