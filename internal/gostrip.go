@@ -86,6 +86,10 @@ func stripNames(tab []byte) {
 				break
 			}
 			//log.Println(string(tab[lastOffset : curOffset-1]))
+			if bytes.HasPrefix(tab[lastOffset:curOffset-1], []byte("runtime.")) {
+				lastOffset = curOffset
+				continue
+			}
 			for j := lastOffset; j < curOffset-1; j++ {
 				tab[j] = '?'
 			}
